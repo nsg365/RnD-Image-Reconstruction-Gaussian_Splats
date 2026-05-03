@@ -1,0 +1,16 @@
+# Requirements for mask_tool.py + reconstruct_splats.py
+# ────────────────────────────────────────────────────────
+# PyTorch — install first with your CUDA version:
+#   CUDA 11.8:  pip install torch==2.2.2 --index-url https://download.pytorch.org/whl/cu118
+#   CUDA 12.1:  pip install torch==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+#   CPU only:   pip install torch==2.2.2 --index-url https://download.pytorch.org/whl/cpu
+
+# Image I/O and drawing (headless — no Qt/GTK required)
+opencv-python-headless==4.9.0.80
+
+# Numerical computing
+numpy==1.26.4
+
+# Web-based mask painter (mask_tool.py)
+flask>=3.0.0
+pillow>=10.0.0
