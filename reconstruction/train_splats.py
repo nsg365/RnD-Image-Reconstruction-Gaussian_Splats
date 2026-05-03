@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.optim as optim
 
-# ── CLI args ───────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="Train 2D Gaussian Splats on a single image")
 parser.add_argument("--image",        type=str,   required=True)
 parser.add_argument("--iterations",   type=int,   default=5000,   help="Training steps (default: 5000)")
@@ -27,12 +26,11 @@ parser.add_argument("--detail_bias",  type=float, default=0.85,
                     help="Fraction of splats seeded on high-gradient pixels (0=uniform, 1=all-detail)")
 args = parser.parse_args()
 
-# ── device ─────────────────────────────────────────────────────────────────────
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Device: {device}")
 os.makedirs(args.output_dir, exist_ok=True)
 
-# ── load & resize ───────────────────────────────────────────────────────────────
+# load & resize
 img_bgr = cv2.imread(args.image)
 if img_bgr is None:
     raise FileNotFoundError(f"Image not found: {args.image}")
@@ -47,7 +45,7 @@ target = torch.tensor(img_rgb, dtype=torch.float32, device=device)
 H, W   = target.shape[:2]
 print(f"Target size: {W}×{H}")
 
-# ── intrinsics (all kept as float32 to avoid double-promotion in tensor ops) ───
+# intrinsics (all kept as float32 to avoid double-promotion in tensor ops)
 fx = fy = np.float32(max(W, H) / (2.0 * np.tan(np.radians(30))))
 cx = np.float32(W / 2.0)
 cy = np.float32(H / 2.0)
@@ -55,7 +53,7 @@ cy = np.float32(H / 2.0)
 R_cam = torch.eye(3,   dtype=torch.float32, device=device)
 t_cam = torch.zeros(3, dtype=torch.float32, device=device)
 
-# ── gradient / detail map for importance sampling ──────────────────────────────
+# gradient / detail map for importance sampling
 def build_detail_map(img: np.ndarray) -> np.ndarray:
     """Returns a (H,W) probability map: high where image has edges/detail."""
     gray   = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
@@ -75,19 +73,19 @@ cv2.imwrite(os.path.join(args.output_dir, "importance_map_broken.jpg"),
             cv2.applyColorMap(imp_vis, cv2.COLORMAP_INFERNO))
 print("Saved importance_map.jpg")
 
-# ── importance-weighted loss map (used during training) ────────────────────────
+#importance-weighted loss map (used during training)
 # Softer version so we don't completely ignore flat areas
 loss_weight = torch.tensor(
     detail_prob / detail_prob.max(), dtype=torch.float32, device=device
 )                                                         # (H, W)  ∈ [ε, 1]
 loss_weight = (loss_weight + 0.2).clamp(max=1.0)         # floor at 0.2 so sky still matters
 
-# ── gradient-weighted splat initialisation ────────────────────────────────────
+# gradient-weighted splat initialisation
 def init_splats(n: int, detail_bias: float):
     """
     Place `n` splats:
       detail_bias  fraction on high-gradient pixels (importance sampling)
-      1-detail_bias fraction uniformly at random
+      1 - detail_bias fraction uniformly at random
     """
     rng = np.random.default_rng(42)
     flat_prob = detail_prob.ravel()
@@ -125,7 +123,7 @@ xyz_np, color_np = init_splats(args.num_splats, args.detail_bias)
 N = xyz_np.shape[0]
 print(f"Initialised {N} splats  ({int(N*args.detail_bias)} detail + {N - int(N*args.detail_bias)} uniform)")
 
-# ── splat tensors (wrapped in a list so densification can replace them) ─────────
+# splat tensors (wrapped in a list so densification can replace them)
 def make_params(xyz_np_, color_np_):
     """Create leaf tensors for a fresh set of splats."""
     n = xyz_np_.shape[0]
@@ -142,7 +140,7 @@ def make_params(xyz_np_, color_np_):
 
 xyz, color_raw, log_sx, log_sy, log_sz, opacity = make_params(xyz_np, color_np)
 
-# ── pixel grid ─────────────────────────────────────────────────────────────────
+# pixel grid
 ys, xs = torch.meshgrid(
     torch.arange(H, device=device, dtype=torch.float32),
     torch.arange(W, device=device, dtype=torch.float32),
@@ -150,7 +148,7 @@ ys, xs = torch.meshgrid(
 )
 pixels = torch.stack([xs, ys], dim=-1)   # (H, W, 2)
 
-# ── render ─────────────────────────────────────────────────────────────────────
+# render
 def render():
     sx = torch.exp(log_sx); sy = torch.exp(log_sy); sz = torch.exp(log_sz)
     alpha = torch.sigmoid(opacity)
@@ -217,7 +215,7 @@ def render():
 
     return torch.clamp(canvas, 0.0, 1.0)
 
-# ── optimiser factory ──────────────────────────────────────────────────────────
+# optimiser
 def make_optimizer():
     return optim.Adam([
         {"params": color_raw, "lr": 5e-3},
@@ -230,7 +228,7 @@ def make_optimizer():
 
 optimizer = make_optimizer()
 
-# ── adaptive densification ─────────────────────────────────────────────────────
+# adaptive densification
 # Accumulate position gradient norms across steps between densification events
 xyz_grad_accum  = torch.zeros(xyz.shape[0], dtype=torch.float32, device=device)
 grad_accum_count = 0
@@ -246,10 +244,10 @@ def densify_and_prune(step):
 
     n_before = xyz.shape[0]
 
-    # ── average accumulated gradient ──────────────────────────────────────────
+    # average accumulated gradient
     avg_grad = xyz_grad_accum / max(grad_accum_count, 1)   # (N,)
 
-    # ── masks ──────────────────────────────────────────────────────────────────
+    # masks
     opac_val    = torch.sigmoid(opacity).detach()
     prune_mask  = opac_val < args.prune_opacity                    # too transparent
     split_mask  = (avg_grad > args.densify_grad_thr) & ~prune_mask # high-error → split
@@ -261,7 +259,7 @@ def densify_and_prune(step):
 
     keep_mask   = ~prune_mask
 
-    # ── collect kept splats ────────────────────────────────────────────────────
+    # collect kept splats
     def g(t, mask): return t[mask].detach()
 
     kxyz  = g(xyz,       keep_mask)
@@ -271,7 +269,7 @@ def densify_and_prune(step):
     klsz  = g(log_sz,    keep_mask)
     kop   = g(opacity,   keep_mask)
 
-    # ── split: replace one large splat with two smaller offset ones ────────────
+    # split: replace one large splat with two smaller offset ones
     if split_mask.any():
         sxyz = g(xyz,       split_mask)
         scr  = g(color_raw, split_mask)
@@ -310,7 +308,7 @@ def densify_and_prune(step):
         klsz = torch.cat([klsz, clsz ])
         kop  = torch.cat([kop,  cop  ])
 
-    # ── enforce hard cap ───────────────────────────────────────────────────────
+    # enforce hard cap
     if kxyz.shape[0] > args.max_splats:
         # keep highest-opacity ones when over cap
         keep_top = torch.argsort(torch.sigmoid(kop), descending=True)[:args.max_splats]
@@ -323,7 +321,7 @@ def densify_and_prune(step):
           f"(+{split_mask.sum().item()} split, +{clone_mask.sum().item()} cloned, "
           f"-{prune_mask.sum().item()} pruned)")
 
-    # ── reassign globals as new leaf tensors ───────────────────────────────────
+    # reassign globals as new leaf tensors 
     xyz       = kxyz.requires_grad_(True)
     color_raw = kcr.requires_grad_(True)
     log_sx    = klsx.requires_grad_(True)
@@ -335,7 +333,7 @@ def densify_and_prune(step):
     grad_accum_count = 0
     optimizer = make_optimizer()
 
-# ── training loop ──────────────────────────────────────────────────────────────
+# training loop
 def train(num_steps: int):
     global xyz_grad_accum, grad_accum_count
 
@@ -360,12 +358,12 @@ def train(num_steps: int):
         if step % 50 == 0:
             print(f"Step {step:5d}/{num_steps} | Loss: {loss.item():.6f} | Splats: {xyz.shape[0]}")
 
-        # ── densification ──────────────────────────────────────────────────────
+        # densification
         if (args.densify_from <= step <= args.densify_until and
                 step % args.densify_every == 0 and step > 0):
             densify_and_prune(step)
 
-        # ── save preview ───────────────────────────────────────────────────────
+        # save preview
         if step % args.save_every == 0:
             out = (pred.detach().cpu().numpy() * 255).astype(np.uint8)
             cv2.imwrite(
@@ -373,7 +371,7 @@ def train(num_steps: int):
                 cv2.cvtColor(out, cv2.COLOR_RGB2BGR),
             )
 
-    # ── final render & checkpoint ──────────────────────────────────────────────
+    # final render & checkpoint
     with torch.no_grad():
         final = render()
     out = (final.cpu().numpy() * 255).astype(np.uint8)
@@ -389,7 +387,7 @@ def train(num_steps: int):
         "opacity":   opacity.detach(),
     }, os.path.join(args.output_dir, "broken_checkpoint.pt"))
 
-    print(f"\n✅ Done. Final splat count: {xyz.shape[0]}")
+    print(f"\n Done. Final splat count: {xyz.shape[0]}")
     print(f"   Outputs saved to {args.output_dir}/")
 
 
