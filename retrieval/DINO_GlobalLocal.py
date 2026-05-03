@@ -11,7 +11,7 @@ from torchvision import transforms
 
 IMAGE_DIR = "dataset/images"
 TARGET_FILE = "dataset/targets.txt"
-RESULT_DIR = "results_global_dino_forgot1"
+RESULT_DIR = "results_global_dino"
 
 TOP_K = 5
 MODEL_RES = 224
