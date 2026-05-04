@@ -89,7 +89,7 @@ def main():
         print("\nProcessing", target)
 
         if target not in embeddings:
-            print("⚠️ Not found:", target)
+            print(" Not found:", target)
             continue
 
         query_emb = embeddings[target]
@@ -147,7 +147,7 @@ def main():
             summary
         )
 
-        print("✅ Saved →", qfolder)
+        print("Saved ", qfolder)
 
 
 if __name__ == "__main__":
